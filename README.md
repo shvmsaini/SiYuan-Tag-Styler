@@ -12,7 +12,7 @@ Transform your plain SiYuan tags into beautiful, high-performance "Pills." This 
 - **Stealth Mode**: Advanced DOM protection prevents SiYuan's search highlighter from breaking your custom styles.
 
 ## 📱 Screenshot
-<img width="727" height="1019" alt="image" src="https://github.com/user-attachments/assets/61684ca3-c32e-455f-8d0b-5cc4b7c19470" />
+<img width="727" height="1019" alt="image" src="preview.png" />
 
 ## 🚀 Installation
 
