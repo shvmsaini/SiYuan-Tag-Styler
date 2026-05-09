@@ -1,0 +1,22 @@
+{
+  "name": "tag-styler",
+  "author": "sainis",
+  "version": "1.0.0",
+  "minAppVersion": "2.10.0",
+  "displayName": {
+    "default": "Tag Styler",
+    "zh_CN": "标签美化",
+    "en_US": "Tag Styler"
+  },
+  "description": {
+    "default": "Beautiful pill-shaped tags for your editor and search results with advanced customization.",
+    "zh_CN": "为编辑器和搜索结果提供精美的药丸形状标签，支持高级自定义。",
+    "en_US": "Beautiful pill-shaped tags for your editor and search results with advanced customization."
+  },
+  "icon": "icon.png",
+  "funding": {
+    "openCollective": "",
+    "patreon": "",
+    "custom": []
+  }
+}
