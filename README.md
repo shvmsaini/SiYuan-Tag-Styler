@@ -11,6 +11,9 @@ Transform your plain SiYuan tags into beautiful, high-performance "Pills." This 
 - **Position Control**: Float your tags to the end of a block for a cleaner, "Property-like" look.
 - **Stealth Mode**: Advanced DOM protection prevents SiYuan's search highlighter from breaking your custom styles.
 
+## 📱 Screenshot
+<img width="727" height="1019" alt="image" src="https://github.com/user-attachments/assets/61684ca3-c32e-455f-8d0b-5cc4b7c19470" />
+
 ## 🚀 Installation
 
 1. Go to **Settings** -> **Bazaar** -> **Plugins**.
