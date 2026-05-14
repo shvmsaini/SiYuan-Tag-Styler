@@ -53,6 +53,10 @@ class TagStylerPlugin extends siyuan.Plugin {
         if (this.checkTimer) clearInterval(this.checkTimer);
     }
 
+    async uninstall() {
+        await this.removeData("config.json");
+    }
+
     getSafeId(name) {
         if (!name) return "null";
         let hash = 0;
