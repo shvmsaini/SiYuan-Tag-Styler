@@ -141,7 +141,7 @@ class TagStylerPlugin extends siyuan.Plugin {
         const config = this.data["config.json"];
         const g = config.global || this.getDefaultConfig().global;
         let css = `
-            span[data-type~="tag"], .ts-stealth-pill, .ts-global-pill {
+            .protyle-wysiwyg span[data-type~="tag"], .ts-stealth-pill, .ts-global-pill {
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
@@ -157,23 +157,23 @@ class TagStylerPlugin extends siyuan.Plugin {
                 background-color: ${g.bgColor} !important;
                 color: ${g.color} !important;
             }
-            ${g.position === "end" ? `span[data-type~="tag"] { float: right !important; margin-left: 8px !important; } [data-node-id]:has(span[data-type~="tag"])::after { content: ""; display: table; clear: both; }` : ""}
+            ${g.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-type~="tag"])::after { content: ""; display: table; clear: both; }` : ""}
             .ts-stealth-pill mark { background-color: rgba(255, 255, 0, 0.4) !important; color: inherit !important; padding: 0 !important; }
-            ${g.showHash ? `span[data-type~="tag"]::before { content: "#"; margin-right: 2px; opacity: 0.7; }` : ""}
+            ${g.showHash ? `.protyle-wysiwyg span[data-type~="tag"]::before { content: "#"; margin-right: 2px; opacity: 0.7; }` : ""}
         `;
         if (config.tagStyles) {
             config.tagStyles.forEach((style) => {
                 if (!style.name) return;
                 const safeId = this.getSafeId(style.name);
-                const selector = `span[data-type~="tag"][data-tag-name="${style.name}"], .${safeId}`;
+                const selector = `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"], .${safeId}`;
                 css += `
 ${selector} {
     color: ${style.color || "#ffffff"} !important;
     background-color: ${style.bgColor || "var(--b3-theme-primary)"} !important;
     border-radius: ${style.shape === "pill" ? "20px" : (style.radius || "4px")} !important;
 }
-${style.showHash === false ? `span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : (style.showHash === true ? `span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }` : "")}
-${style.position === "end" ? `span[data-type~="tag"][data-tag-name="${style.name}"] { float: right !important; margin-left: 8px !important; } [data-node-id]:has(span[data-tag-name="${style.name}"])::after { content: ""; display: table; clear: both; }` : (style.position === "normal" ? `span[data-type~="tag"][data-tag-name="${style.name}"] { float: none !important; margin-left: 4px !important; }` : "")}
+${style.showHash === false ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : (style.showHash === true ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }` : "")}
+${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-tag-name="${style.name}"])::after { content: ""; display: table; clear: both; }` : (style.position === "normal" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: none !important; margin-left: 4px !important; }` : "")}
 `;
             });
         }
@@ -181,7 +181,13 @@ ${style.position === "end" ? `span[data-type~="tag"][data-tag-name="${style.name
     }
 
     initSettingUI() {
-        this.setting = new siyuan.Setting({ confirmCallback: () => { this.saveData("config.json", this.data["config.json"]); this.updateStyles(); } });
+        this.setting = new siyuan.Setting({ 
+            confirmCallback: () => { 
+                this.data["config.json"] = JSON.parse(JSON.stringify(this.tempConfig));
+                this.saveData("config.json", this.data["config.json"]); 
+                this.updateStyles(); 
+            } 
+        });
         this.settingsContainer = document.createElement("div");
         this.settingsContainer.className = "fn__flex-column";
         this.settingsContainer.style.width = "100%";
@@ -189,11 +195,15 @@ ${style.position === "end" ? `span[data-type~="tag"][data-tag-name="${style.name
         this.setting.addItem({ title: "", description: "", actionElement: this.settingsContainer });
     }
 
-    openSetting() { this.renderSettingsList(); this.setting.open("Tag Styler Settings"); }
+    openSetting() { 
+        this.tempConfig = JSON.parse(JSON.stringify(this.data["config.json"]));
+        this.renderSettingsList(); 
+        this.setting.open("Tag Styler Settings"); 
+    }
 
     renderSettingsList() {
         this.settingsContainer.innerHTML = "";
-        const config = this.data["config.json"];
+        const config = this.tempConfig;
         const globalCard = document.createElement("div");
         globalCard.className = "b3-label fn__flex-column";
         globalCard.style.padding = "16px"; globalCard.style.border = "1px solid var(--b3-theme-primary-light)"; globalCard.style.borderRadius = "12px"; globalCard.style.backgroundColor = "var(--b3-theme-surface-lighter)"; globalCard.style.gap = "12px"; globalCard.style.marginBottom = "10px";
