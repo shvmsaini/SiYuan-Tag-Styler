@@ -93,7 +93,7 @@ class TagStylerPlugin extends siyuan.Plugin {
                     const safeId = this.getSafeId(style.name);
                     const escapedChars = style.name.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
                     const pattern = escapedChars.join('(?:<mark>|<\/mark>)*');
-                    const regex = new RegExp(`(#?${pattern})`, 'g');
+                    const regex = new RegExp(`(?<![\\w/])(#?${pattern})(?![\\w/])`, 'g');
                     html = html.replace(regex, (match) => {
                         if (match.includes('ts-stealth-pill')) return match;
                         changed = true;
@@ -110,7 +110,7 @@ class TagStylerPlugin extends siyuan.Plugin {
                     });
                 });
 
-                const globalRegex = /(#[\w/]+)(?![^<]*>)/g;
+                const globalRegex = /(?<![\w/])(#[\w/]+)(?![^<]*>)/g;
                 html = html.replace(globalRegex, (match) => {
                     if (match.includes('__TS_PH_') || match.includes('ts-stealth-pill')) return match;
                     changed = true;
