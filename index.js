@@ -51,6 +51,7 @@ class TagStylerPlugin extends siyuan.Plugin {
         if (this.styleElement) this.styleElement.remove();
         if (this.observer) this.observer.disconnect();
         if (this.checkTimer) clearInterval(this.checkTimer);
+        if (this.processRAF) cancelAnimationFrame(this.processRAF);
     }
 
     async uninstall() {
@@ -71,7 +72,7 @@ class TagStylerPlugin extends siyuan.Plugin {
         const root = element || document;
         const tags = root.querySelectorAll('span[data-type~="tag"]');
         tags.forEach((tag) => {
-            const text = tag.innerText || tag.textContent || "";
+            const text = tag.textContent || "";
             const tagName = text.trim().replace(/^#/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
             if (tagName && tag.getAttribute("data-tag-name") !== tagName) {
                 tag.setAttribute("data-tag-name", tagName);
@@ -81,7 +82,16 @@ class TagStylerPlugin extends siyuan.Plugin {
         const searchItems = root.querySelectorAll(".b3-list-item__text, .search__list .b3-list-item");
         const config = this.data["config.json"];
         if (config && config.tagStyles) {
-            const sortedStyles = [...config.tagStyles].sort((a, b) => b.name.length - a.name.length);
+            const sortedStyles = [...config.tagStyles].sort((a, b) => b.name.length - a.name.length).map(style => {
+                if (!style.name) return style;
+                const safeId = this.getSafeId(style.name);
+                const escapedChars = style.name.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+                const pattern = escapedChars.join('(?:<mark>|<\/mark>)*');
+                const regex = new RegExp(`(?<![\\w/])(#?${pattern})(?![\\w/])`, 'g');
+                return { ...style, safeId, regex };
+            });
+            const globalRegex = /(?<![\\w/])(#[\\w/]+)(?![^<]*>)/g;
+
             searchItems.forEach(item => {
                 if (item.getAttribute("data-tag-styled")) return;
                 let html = item.innerHTML;
@@ -89,12 +99,8 @@ class TagStylerPlugin extends siyuan.Plugin {
                 let changed = false;
 
                 sortedStyles.forEach((style) => {
-                    if (!style.name) return;
-                    const safeId = this.getSafeId(style.name);
-                    const escapedChars = style.name.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-                    const pattern = escapedChars.join('(?:<mark>|<\/mark>)*');
-                    const regex = new RegExp(`(?<![\\w/])(#?${pattern})(?![\\w/])`, 'g');
-                    html = html.replace(regex, (match) => {
+                    if (!style.name || !style.regex) return;
+                    html = html.replace(style.regex, (match) => {
                         if (match.includes('ts-stealth-pill')) return match;
                         changed = true;
                         const pId = `__TS_PH_${placeholders.length}__`;
@@ -105,12 +111,11 @@ class TagStylerPlugin extends siyuan.Plugin {
                         } else if (!showHash) {
                             finalContent = match.replace(/^#/, '').replace(/^<mark>#/, '<mark>');
                         }
-                        placeholders.push({ id: pId, content: `<span class="ts-stealth-pill ${safeId}">${finalContent}</span>` });
+                        placeholders.push({ id: pId, content: `<span class="ts-stealth-pill ${style.safeId}">${finalContent}</span>` });
                         return pId;
                     });
                 });
 
-                const globalRegex = /(?<![\w/])(#[\w/]+)(?![^<]*>)/g;
                 html = html.replace(globalRegex, (match) => {
                     if (match.includes('__TS_PH_') || match.includes('ts-stealth-pill')) return match;
                     changed = true;
@@ -132,9 +137,21 @@ class TagStylerPlugin extends siyuan.Plugin {
 
     startObserver() {
         this.processTags(document);
-        this.observer = new MutationObserver(() => this.processTags(document));
+        this.observer = new MutationObserver(() => {
+            if (this.processRAF) return;
+            this.processRAF = requestAnimationFrame(() => {
+                this.processRAF = null;
+                this.processTags(document);
+            });
+        });
         this.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-        this.checkTimer = setInterval(() => this.processTags(document), 2000);
+        this.checkTimer = setInterval(() => {
+            if (this.processRAF) return;
+            this.processRAF = requestAnimationFrame(() => {
+                this.processRAF = null;
+                this.processTags(document);
+            });
+        }, 2000);
     }
 
     updateStyles() {
