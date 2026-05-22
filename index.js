@@ -8,30 +8,30 @@ class TagStylerPlugin extends siyuan.Plugin {
         this.styleElement = null;
         this.observer = null;
         this.settingsContainer = null;
+        this.processRAF = null;
+        this.checkTimer = null;
     }
 
     async onload() {
         console.log("TagStylerPlugin onload");
-        
+
         this.styleElement = document.createElement("style");
         this.styleElement.id = "siyuan-tag-styler";
         document.head.appendChild(this.styleElement);
 
-        this.startObserver();
-
+        this.data["config.json"] = this.getDefaultConfig();
         try {
             const data = await this.loadData("config.json");
-            if (!data) {
-                this.data["config.json"] = this.getDefaultConfig();
-            } else {
+            if (data) {
                 this.data["config.json"] = Object.assign(this.getDefaultConfig(), data);
             }
         } catch (e) {
-            this.data["config.json"] = this.getDefaultConfig();
+            console.error("Failed to load TagStyler configuration", e);
         }
-        
+
         this.updateStyles();
         this.initSettingUI();
+        this.startObserver();
     }
 
     getDefaultConfig() {
@@ -48,10 +48,19 @@ class TagStylerPlugin extends siyuan.Plugin {
     }
 
     onunload() {
-        if (this.styleElement) this.styleElement.remove();
-        if (this.observer) this.observer.disconnect();
         if (this.checkTimer) clearInterval(this.checkTimer);
-        if (this.processRAF) cancelAnimationFrame(this.processRAF);
+        if (this.processRAF) {
+            cancelAnimationFrame(this.processRAF);
+            this.processRAF = null;
+        }
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+        if (this.styleElement) {
+            this.styleElement.remove();
+            this.styleElement = null;
+        }
     }
 
     async uninstall() {
@@ -70,8 +79,13 @@ class TagStylerPlugin extends siyuan.Plugin {
 
     processTags(element) {
         const root = element || document;
+        const config = this.data["config.json"];
+        if (!config) return;
+
+        // 1. Process explicit Wysiwyg tag nodes in the editor
         const tags = root.querySelectorAll('span[data-type~="tag"]');
         tags.forEach((tag) => {
+            if (tag.closest('.av__cell')) return; // Skip database elements here
             const text = tag.textContent || "";
             const tagName = text.trim().replace(/^#/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
             if (tagName && tag.getAttribute("data-tag-name") !== tagName) {
@@ -79,77 +93,107 @@ class TagStylerPlugin extends siyuan.Plugin {
             }
         });
 
+        // 2. Process peripheral list items & search results
         const searchItems = root.querySelectorAll(".b3-list-item__text, .search__list .b3-list-item");
-        const config = this.data["config.json"];
-        if (config && config.tagStyles) {
-            const sortedStyles = [...config.tagStyles].sort((a, b) => b.name.length - a.name.length).map(style => {
-                if (!style.name) return style;
-                const safeId = this.getSafeId(style.name);
-                const escapedChars = style.name.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-                const pattern = escapedChars.join('(?:<mark>|<\/mark>)*');
-                const regex = new RegExp(`(?<![\\w/])(#?${pattern})(?![\\w/])`, 'g');
-                return { ...style, safeId, regex };
-            });
-            const globalRegex = /(?<![\\w/])(#[\\w/]+)(?![^<]*>)/g;
-
+        if (searchItems.length > 0 && config.tagStyles) {
+            const sortedStyles = [...config.tagStyles].sort((a, b) => b.name.length - a.name.length);
             searchItems.forEach(item => {
                 if (item.getAttribute("data-tag-styled")) return;
                 let html = item.innerHTML;
-                let placeholders = [];
                 let changed = false;
 
                 sortedStyles.forEach((style) => {
-                    if (!style.name || !style.regex) return;
-                    html = html.replace(style.regex, (match) => {
-                        if (match.includes('ts-stealth-pill')) return match;
-                        changed = true;
-                        const pId = `__TS_PH_${placeholders.length}__`;
-                        const showHash = style.showHash !== false;
-                        let finalContent = match;
-                        if (showHash && !match.startsWith("#") && !match.startsWith("<mark>#")) {
-                            finalContent = "#" + match;
-                        } else if (!showHash) {
-                            finalContent = match.replace(/^#/, '').replace(/^<mark>#/, '<mark>');
-                        }
-                        placeholders.push({ id: pId, content: `<span class="ts-stealth-pill ${style.safeId}">${finalContent}</span>` });
-                        return pId;
-                    });
-                });
+                    if (!style.name) return;
+                    const safeId = this.getSafeId(style.name);
+                    const escaped = style.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regex = new RegExp(`(?<![\\w/])(#?${escaped})(?![\\w/])`, 'g');
 
-                html = html.replace(globalRegex, (match) => {
-                    if (match.includes('__TS_PH_') || match.includes('ts-stealth-pill')) return match;
-                    changed = true;
-                    const pId = `__TS_PH_${placeholders.length}__`;
-                    const showHash = config.global.showHash !== false;
-                    let finalContent = showHash ? match : match.replace(/^#/, '');
-                    placeholders.push({ id: pId, content: `<span class="ts-stealth-pill ts-global-pill">${finalContent}</span>` });
-                    return pId;
+                    if (regex.test(html)) {
+                        html = html.replace(regex, (match) => {
+                            if (match.includes('ts-stealth-pill')) return match;
+                            changed = true;
+                            const showHash = style.showHash !== false;
+                            let cleanText = match.replace(/^#/, '');
+                            return `<span class="ts-stealth-pill ${safeId}">${showHash ? '#' : ''}${cleanText}</span>`;
+                        });
+                    }
                 });
 
                 if (changed) {
-                    placeholders.forEach(p => { html = html.split(p.id).join(p.content); });
                     item.innerHTML = html;
                     item.setAttribute("data-tag-styled", "true");
                 }
+            });
+        }
+
+        // 3. SPECIAL FIX: Process plain-text tags inside database attribute views (.av__cell)
+        const dbCells = root.querySelectorAll(".av__cell");
+        if (dbCells.length > 0) {
+            dbCells.forEach(cell => {
+                // Find all text nodes or links inside the cell that contain # tags
+                const targets = cell.querySelectorAll(".av__cell-text, a, span");
+                const elementsToProcess = targets.length > 0 ? Array.from(targets) : [cell];
+
+                elementsToProcess.forEach(el => {
+                    if (el.children.length > 0 && !el.tagName.toLowerCase() === 'a') return; // Only target text containers
+                    let html = el.innerHTML;
+
+                    // Regex matches words surrounded by hashes, e.g., #Graph# or #dp#
+                    const dbTagRegex = /#([A-Za-z0-9_\-\/]+)#/g;
+
+                    if (dbTagRegex.test(html)) {
+                        let changed = false;
+                        html = html.replace(dbTagRegex, (match, tagName) => {
+                            changed = true;
+                            // Check if there's a custom configuration rule for this tag name
+                            const matchedStyle = config.tagStyles.find(s => s.name === tagName);
+                            const safeId = matchedStyle ? this.getSafeId(tagName) : "ts-global-pill";
+                            const showHash = matchedStyle ? (matchedStyle.showHash !== false) : (config.global.showHash !== false);
+
+                            return `<span class="ts-db-pill ${safeId}" data-tag-name="${tagName}">${showHash ? '#' : ''}${tagName}</span>`;
+                        });
+
+                        if (changed) {
+                            el.innerHTML = html;
+                        }
+                    }
+                });
             });
         }
     }
 
     startObserver() {
         this.processTags(document);
+
         this.observer = new MutationObserver(() => {
             if (this.processRAF) return;
             this.processRAF = requestAnimationFrame(() => {
                 this.processRAF = null;
+                if (this.observer) this.observer.disconnect();
+
                 this.processTags(document);
+
+                if (this.observer) {
+                    this.observer.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                        characterData: true
+                    });
+                }
             });
         });
+
         this.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
         this.checkTimer = setInterval(() => {
             if (this.processRAF) return;
             this.processRAF = requestAnimationFrame(() => {
                 this.processRAF = null;
+                if (this.observer) this.observer.disconnect();
                 this.processTags(document);
+                if (this.observer) {
+                    this.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+                }
             });
         }, 2000);
     }
@@ -157,53 +201,69 @@ class TagStylerPlugin extends siyuan.Plugin {
     updateStyles() {
         const config = this.data["config.json"];
         const g = config.global || this.getDefaultConfig().global;
+
         let css = `
-            .protyle-wysiwyg span[data-type~="tag"], .ts-stealth-pill, .ts-global-pill {
+            .protyle-wysiwyg span[data-type~="tag"],
+            .ts-stealth-pill,
+            .ts-global-pill,
+            .ts-db-pill {
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
                 border-radius: ${g.shape === "pill" ? "20px" : "4px"} !important;
-                padding: 1px 12px !important;
-                margin: 0 2px !important;
+                padding: 2px 10px !important;
+                margin: 0 3px !important;
                 border: none !important;
-                font-size: 0.9em !important;
+                font-size: 0.85em !important;
                 font-weight: 500 !important;
-                line-height: 1.4 !important;
+                line-height: 1.3 !important;
                 vertical-align: middle !important;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.15) !important;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.12) !important;
                 background-color: ${g.bgColor} !important;
                 color: ${g.color} !important;
+                text-decoration: none !important;
             }
+
+            /* Ensure links inside DB columns don't underline our custom badges */
+            .av__cell a { text-decoration: none !important; }
+
+            .protyle-wysiwyg span[data-type~="tag"]::before {
+                ${g.showHash ? 'content: "#"; margin-right: 2px; opacity: 0.7;' : 'content: ""; display: none;'}
+            }
+
             ${g.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-type~="tag"])::after { content: ""; display: table; clear: both; }` : ""}
             .ts-stealth-pill mark { background-color: rgba(255, 255, 0, 0.4) !important; color: inherit !important; padding: 0 !important; }
-            ${g.showHash ? `.protyle-wysiwyg span[data-type~="tag"]::before { content: "#"; margin-right: 2px; opacity: 0.7; }` : ""}
         `;
+
         if (config.tagStyles) {
             config.tagStyles.forEach((style) => {
                 if (!style.name) return;
                 const safeId = this.getSafeId(style.name);
-                const selector = `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"], .${safeId}`;
+
                 css += `
-${selector} {
-    color: ${style.color || "#ffffff"} !important;
-    background-color: ${style.bgColor || "var(--b3-theme-primary)"} !important;
-    border-radius: ${style.shape === "pill" ? "20px" : (style.radius || "4px")} !important;
-}
-${style.showHash === false ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : (style.showHash === true ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }` : "")}
-${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-tag-name="${style.name}"])::after { content: ""; display: table; clear: both; }` : (style.position === "normal" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: none !important; margin-left: 4px !important; }` : "")}
-`;
+                    .protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"],
+                    .ts-db-pill[data-tag-name="${style.name}"],
+                    .${safeId} {
+                        color: ${style.color || "#ffffff"} !important;
+                        background-color: ${style.bgColor || "var(--b3-theme-primary)"} !important;
+                        border-radius: ${style.shape === "pill" ? "20px" : (style.radius || "4px")} !important;
+                    }
+
+                    ${style.showHash === false ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }`}
+                    ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-tag-name="${style.name}"])::after { content: ""; display: table; clear: both; }` : `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: none !important; margin-left: 4px !important; }`}
+                `;
             });
         }
         if (this.styleElement) this.styleElement.textContent = css;
     }
 
     initSettingUI() {
-        this.setting = new siyuan.Setting({ 
-            confirmCallback: () => { 
+        this.setting = new siyuan.Setting({
+            confirmCallback: () => {
                 this.data["config.json"] = JSON.parse(JSON.stringify(this.tempConfig));
-                this.saveData("config.json", this.data["config.json"]); 
-                this.updateStyles(); 
-            } 
+                this.saveData("config.json", this.data["config.json"]);
+                this.updateStyles();
+            }
         });
         this.settingsContainer = document.createElement("div");
         this.settingsContainer.className = "fn__flex-column";
@@ -212,18 +272,25 @@ ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-n
         this.setting.addItem({ title: "", description: "", actionElement: this.settingsContainer });
     }
 
-    openSetting() { 
+    openSetting() {
         this.tempConfig = JSON.parse(JSON.stringify(this.data["config.json"]));
-        this.renderSettingsList(); 
-        this.setting.open("Tag Styler Settings"); 
+        this.renderSettingsList();
+        this.setting.open("Tag Styler Settings");
     }
 
     renderSettingsList() {
         this.settingsContainer.innerHTML = "";
         const config = this.tempConfig;
+
         const globalCard = document.createElement("div");
         globalCard.className = "b3-label fn__flex-column";
-        globalCard.style.padding = "16px"; globalCard.style.border = "1px solid var(--b3-theme-primary-light)"; globalCard.style.borderRadius = "12px"; globalCard.style.backgroundColor = "var(--b3-theme-surface-lighter)"; globalCard.style.gap = "12px"; globalCard.style.marginBottom = "10px";
+        globalCard.style.padding = "16px";
+        globalCard.style.border = "1px solid var(--b3-theme-primary-light)";
+        globalCard.style.borderRadius = "12px";
+        globalCard.style.backgroundColor = "var(--b3-theme-surface-lighter)";
+        globalCard.style.gap = "12px";
+        globalCard.style.marginBottom = "10px";
+
         globalCard.innerHTML = `
             <div class="fn__flex" style="align-items: center; gap: 8px;"><svg style="width: 16px; height: 16px; color: var(--b3-theme-primary);"><use xlink:href="#iconSettings"></use></svg><span style="font-weight: 700; color: var(--b3-theme-primary);">Global Defaults</span></div>
             <div class="fn__flex" style="gap: 15px; flex-wrap: wrap; align-items: flex-end;">
@@ -233,11 +300,20 @@ ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-n
                 <label class="fn__flex" style="align-items: center; gap: 8px; cursor: pointer; padding-bottom: 6px;"><input type="checkbox" class="b3-switch" data-key="showHash" data-target="global" ${config.global.showHash ? "checked" : ""}> <span style="font-size: 0.85em;">Show #</span></label>
             </div>
         `;
-        globalCard.querySelectorAll("input, select").forEach(el => { el.addEventListener(el.type === "checkbox" ? "change" : "input", (e) => { const val = e.target.type === "checkbox" ? e.target.checked : e.target.value; config.global[e.target.getAttribute("data-key")] = val; }); });
+
+        globalCard.querySelectorAll("input, select").forEach(el => {
+            el.addEventListener(el.type === "checkbox" ? "change" : "input", (e) => {
+                const val = e.target.type === "checkbox" ? e.target.checked : e.target.value;
+                config.global[e.target.getAttribute("data-key")] = val;
+            });
+        });
         this.settingsContainer.appendChild(globalCard);
+
         const listContainer = document.createElement("div");
-        listContainer.className = "fn__flex-column"; listContainer.style.gap = "8px";
+        listContainer.className = "fn__flex-column";
+        listContainer.style.gap = "8px";
         this.settingsContainer.appendChild(listContainer);
+
         config.tagStyles.forEach((style, index) => {
             const card = document.createElement("div");
             card.className = "b3-label fn__flex-column";
@@ -250,11 +326,22 @@ ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-n
                     <div class="fn__flex-column" style="gap: 4px;"><label style="font-size: 0.7em; opacity: 0.6;">Pos</label><select class="b3-select" data-key="position" style="width: 95px;"><option value="normal" ${style.position === "normal" ? "selected" : ""}>Inline</option><option value="end" ${style.position === "end" ? "selected" : ""}>Float End</option></select></div>
                     <label class="fn__flex" style="align-items: center; gap: 4px; cursor: pointer; padding-bottom: 6px;"><input type="checkbox" class="b3-switch" data-key="showHash" ${style.showHash !== false ? "checked" : ""}> <span style="font-size: 0.8em; opacity: 0.8;">#</span></label>
                 </div>`;
+
             const preview = card.querySelector(".tag-preview");
-            card.querySelectorAll("input, select").forEach((input) => { input.addEventListener(input.type === "checkbox" ? "change" : "input", (e) => { const key = e.target.getAttribute("data-key"); style[key] = e.target.type === "checkbox" ? e.target.checked : e.target.value; if (key === "name" || key === "showHash") preview.textContent = (style.showHash !== false ? "#" : "") + style.name; if (key === "color") preview.style.color = style.color; if (key === "bgColor") preview.style.backgroundColor = style.bgColor; if (key === "shape") preview.style.borderRadius = style.shape === "pill" ? "20px" : "4px"; }); });
+            card.querySelectorAll("input, select").forEach((input) => {
+                input.addEventListener(input.type === "checkbox" ? "change" : "input", (e) => {
+                    const key = e.target.getAttribute("data-key");
+                    style[key] = e.target.type === "checkbox" ? e.target.checked : e.target.value;
+                    if (key === "name" || key === "showHash") preview.textContent = (style.showHash !== false ? "#" : "") + style.name;
+                    if (key === "color") preview.style.color = style.color;
+                    if (key === "bgColor") preview.style.backgroundColor = style.bgColor;
+                    if (key === "shape") preview.style.borderRadius = style.shape === "pill" ? "20px" : "4px";
+                });
+            });
             card.querySelector(".delete-btn").onclick = () => { config.tagStyles.splice(index, 1); this.renderSettingsList(); };
             listContainer.appendChild(card);
         });
+
         const addBtn = document.createElement("button");
         addBtn.className = "b3-button b3-button--text fn__block"; addBtn.style.padding = "10px"; addBtn.style.border = "2px dashed var(--b3-border-color)"; addBtn.style.marginTop = "5px";
         addBtn.innerHTML = `<svg style="width: 14px; height: 14px; margin-right: 8px; vertical-align: middle;"><use xlink:href="#iconAdd"></use></svg>Add Tag Customization`;
@@ -262,4 +349,5 @@ ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-n
         this.settingsContainer.appendChild(addBtn);
     }
 }
+
 module.exports = TagStylerPlugin;
