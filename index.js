@@ -82,7 +82,7 @@ class TagStylerPlugin extends siyuan.Plugin {
         const config = this.data["config.json"];
         if (!config) return;
 
-        // 1. Process explicit Wysiwyg tag nodes in the editor
+        // 1. Process explicit tag nodes in editor, outline panel, and docks
         const tags = root.querySelectorAll('span[data-type~="tag"]');
         tags.forEach((tag) => {
             if (tag.closest('.av__cell')) return; // Skip database elements here
@@ -93,12 +93,13 @@ class TagStylerPlugin extends siyuan.Plugin {
             }
         });
 
-        // 2. Process peripheral list items & search results
-        const searchItems = root.querySelectorAll(".b3-list-item__text, .search__list .b3-list-item");
+        // 2. Process search results plain-text tags
+        const searchItems = root.querySelectorAll(".search__list .b3-list-item__text, .search__list .b3-list-item, [data-type='search'] .b3-list-item__text");
         if (searchItems.length > 0 && config.tagStyles) {
             const sortedStyles = [...config.tagStyles].sort((a, b) => b.name.length - a.name.length);
             searchItems.forEach(item => {
                 if (item.getAttribute("data-tag-styled")) return;
+                if (item.querySelector('span[data-type~="tag"]')) return;
                 let html = item.innerHTML;
                 let changed = false;
 
@@ -106,7 +107,8 @@ class TagStylerPlugin extends siyuan.Plugin {
                     if (!style.name) return;
                     const safeId = this.getSafeId(style.name);
                     const escaped = style.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    const regex = new RegExp(`(?<![\\w/])(#?${escaped})(?![\\w/])`, 'g');
+                    // HTML-safe regex: match tag only when not inside HTML tags/attributes
+                    const regex = new RegExp(`(?<![\\w/])(#?${escaped})(?![\\w/])(?![^<]*>)`, 'g');
 
                     if (regex.test(html)) {
                         html = html.replace(regex, (match) => {
@@ -135,7 +137,7 @@ class TagStylerPlugin extends siyuan.Plugin {
                 const elementsToProcess = targets.length > 0 ? Array.from(targets) : [cell];
 
                 elementsToProcess.forEach(el => {
-                    if (el.children.length > 0 && !el.tagName.toLowerCase() === 'a') return; // Only target text containers
+                    if (el.children.length > 0 && el.tagName.toLowerCase() !== 'a') return; // Only target text containers
                     let html = el.innerHTML;
 
                     // Regex matches words surrounded by hashes, e.g., #Graph# or #dp#
@@ -203,7 +205,7 @@ class TagStylerPlugin extends siyuan.Plugin {
         const g = config.global || this.getDefaultConfig().global;
 
         let css = `
-            .protyle-wysiwyg span[data-type~="tag"],
+            span[data-type~="tag"],
             .ts-stealth-pill,
             .ts-global-pill,
             .ts-db-pill {
@@ -211,26 +213,29 @@ class TagStylerPlugin extends siyuan.Plugin {
                 align-items: center !important;
                 justify-content: center !important;
                 border-radius: ${g.shape === "pill" ? "20px" : "4px"} !important;
-                padding: 2px 10px !important;
+                padding: 1px 8px !important;
                 margin: 0 3px !important;
                 border: none !important;
                 font-size: 0.85em !important;
                 font-weight: 500 !important;
-                line-height: 1.3 !important;
+                line-height: 1.25 !important;
                 vertical-align: middle !important;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.12) !important;
                 background-color: ${g.bgColor} !important;
                 color: ${g.color} !important;
                 text-decoration: none !important;
+                white-space: nowrap !important;
+                flex-shrink: 0 !important;
             }
 
             /* Ensure links inside DB columns don't underline our custom badges */
             .av__cell a { text-decoration: none !important; }
 
-            .protyle-wysiwyg span[data-type~="tag"]::before {
-                ${g.showHash ? 'content: "#"; margin-right: 2px; opacity: 0.7;' : 'content: ""; display: none;'}
+            span[data-type~="tag"]::before {
+                ${g.showHash ? 'content: "#" !important; margin-right: 2px !important; opacity: 0.7 !important; display: inline-block !important;' : 'content: "" !important; display: none !important;'}
             }
 
+            /* Float end only in protyle editor to avoid breaking list tree/outline panel layouts */
             ${g.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-type~="tag"])::after { content: ""; display: table; clear: both; }` : ""}
             .ts-stealth-pill mark { background-color: rgba(255, 255, 0, 0.4) !important; color: inherit !important; padding: 0 !important; }
         `;
@@ -241,7 +246,7 @@ class TagStylerPlugin extends siyuan.Plugin {
                 const safeId = this.getSafeId(style.name);
 
                 css += `
-                    .protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"],
+                    span[data-type~="tag"][data-tag-name="${style.name}"],
                     .ts-db-pill[data-tag-name="${style.name}"],
                     .${safeId} {
                         color: ${style.color || "#ffffff"} !important;
@@ -249,7 +254,7 @@ class TagStylerPlugin extends siyuan.Plugin {
                         border-radius: ${style.shape === "pill" ? "20px" : (style.radius || "4px")} !important;
                     }
 
-                    ${style.showHash === false ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }`}
+                    ${style.showHash === false ? `span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "" !important; display: none !important; }` : `span[data-type~="tag"][data-tag-name="${style.name}"]::before { content: "#" !important; margin-right: 2px !important; opacity: 0.8 !important; display: inline-block !important; }`}
                     ${style.position === "end" ? `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: right !important; margin-left: 8px !important; } .protyle-wysiwyg [data-node-id]:has(span[data-tag-name="${style.name}"])::after { content: ""; display: table; clear: both; }` : `.protyle-wysiwyg span[data-type~="tag"][data-tag-name="${style.name}"] { float: none !important; margin-left: 4px !important; }`}
                 `;
             });

@@ -1,6 +1,6 @@
 # SiYuan Tag Styler 🎨
 
-Transform your plain SiYuan tags into beautiful, high-performance "Pills." This plugin works across the entire application, including the **Protyle Editor** and the **Global Search Results**.
+Transform your plain SiYuan tags into beautiful, high-performance "Pills." This plugin works across the entire application, including the **Protyle Editor**, **Outline Panel**, and the **Global Search Results**.
 
 ## ✨ Features
 
